@@ -5,9 +5,9 @@ A set of tools to work with data from the `Czech National Information System of 
 
 The official source provides ~10.5k zip files (batches) inside another zip. That is rather unconvenient to parse. This script tries to merge all of them into a single batch. It can also download up-to-date data from the server.
 
-Currently outputs 3/17 files specified in the JDF 1.11:
+Currently outputs 4/17 files specified in the JDF 1.11:
  - [x] **VerzeJDF**
- - [ ] Zastavky
+ - [x] **Zastavky**
  - [ ] Oznacniky
  - [x] **Dopravci**
  - [ ] Linky
@@ -35,4 +35,4 @@ JDF specification (in Czech):
 
 ## Final notes
 
-Current priority is to parse and merge all the files. Then I may focus on refactoring and creating some other tools. Also, the software works only with bus data, since parseable timetables for any other means of transport aren't currently available.
+IDs may not be consistent across data updates, because they are being generated during run and I have no access to the central database. Current priority is to parse and merge all the files. Then I may focus on refactoring and creating some other tools. Also, the software works only with bus data, since parseable timetables for any other means of transport aren't currently available.

@@ -31,13 +31,15 @@ from datetime import date
 
 SERVER = 'ftp.cisjr.cz'
 SERVER_DIR = 'JDF'
+SERVER_LIST_DIR = 'seznamy'
+SERVER_LIST_STOPS = 'zastavky.txt'
 SERVER_FILE = 'JDF.zip'
 MODIFY_FILE = 'JDFmodify.txt'
 DATA_DIR = 'data'
 OUT_DIR = 'out'
 
 # Parse JDF file
-def jdfread(name, compulsory=0):
+def jdfread(name, z, compulsory=0):
   lines = []
   try:
     with z.open(name + '.txt') as f:
@@ -58,122 +60,237 @@ def jdfread(name, compulsory=0):
   return lines
 
 def jdfwrite(name, content):
+  try:
+    content = sorted(list(content), key = lambda x: int(x[0]))
+  except ValueError:
+    pass
+  
   if not os.path.exists('{0}/{1}'.format(DATA_DIR, OUT_DIR)):
     os.makedirs('{0}/{1}'.format(DATA_DIR, OUT_DIR))
   with open('{0}/{1}/{2}.txt'.format(DATA_DIR, OUT_DIR, name), 'w') as f:
     for l in content:
+      i = 0
       for c in l:
         f.write('"' + c + '"')
-        if c != l[len(l)-1]:
+        if i != len(l)-1:
           f.write(',')
+        i += 1
       f.write(';\r\n')
 
-# Check whether we have the newest JDF.zip
-print('Connecting to {0}'.format(SERVER))
-ftp = FTP(SERVER)
-ftp.login()
-ftp.cwd(SERVER_DIR)
-modify = int(ftp.sendcmd('MDTM ' + SERVER_FILE).split(' ')[1])
-localModify = 0
-try:
-  with open('{0}/{1}'.format(DATA_DIR, MODIFY_FILE), 'r') as f:
-    try:
-      localModify = int(f.read())
-    except ValueError:
-      pass
-except FileNotFoundError:
-  pass
+def processZastavky():
+  print('Zastavky')
+  global n_zastavky
+  global l_zastavky
+  # Get list of all stops
+  # TODO: Identify country
+  with open('{0}/{1}'.format(DATA_DIR, SERVER_LIST_STOPS), 'rb') as z:
+    i = 1
+    for line in z:
+      line = line.decode('cp1250')[:-2].split(',')
+      if len(line) == 1:
+        line.append('')
+      if len(line) == 2:
+        line.append('')
+      n_zastavky.update({tuple(line):tuple([str(i)]+8*[''])})
+      i += 1
+  
+  for zip in zips:
+    batchID = zip.split('.')[0]
+    with main.open(zip) as batch:
+      zdata = BytesIO(batch.read())
+      with ZipFile(zdata, 'r') as z:
+        zastavky = jdfread('Zastavky', z, 1)
+        
+        for z in zastavky:
+          zast = z[1].split(',')
+          if len(zast) > 1:
+            z[1] = zast[0]
+            z[2] = zast[1]
+          if len(zast) > 2:
+            z[3] = zast[2]
+          x = n_zastavky[tuple(z[1:4])]
+          # Write with stop names keys
+          n_zastavky.update({tuple(z[1:4]):tuple([x[0]]+z[4:])})
+          l_zastavky.update({tuple([batchID, z[0]]):n_zastavky[tuple(z[1:4])][0]})
+  # Change keys to stop ID
+  n_zastavky = {str(x[1][0]):tuple(list(x[0])+list(x[1][1:])) for x in n_zastavky.items()}
 
-try:
-  with open('{0}/{1}'.format(DATA_DIR, SERVER_FILE), 'r') as f:
-    pass
-except FileNotFoundError:
+def getVersion(z):
+  # Get JDF version of current batch
+  verzejdf = jdfread('VerzeJDF', z, 1).pop()
+  return int(verzejdf[0].split('.')[1])
+
+def processOznacniky():
+  print('Oznacniky')
+
+def processDopravci():
+  print('Dopravci')
+  global n_dopravci
+  global l_dopravci
+  # Processing carriers
+  for zip in zips:
+    batchID = zip.split('.')[0]
+    with main.open(zip) as batch:
+      zdata = BytesIO(batch.read())
+      with ZipFile(zdata, 'r') as z:
+        version = getVersion(z)
+        dopravci = jdfread('Dopravci', z, 1)
+        
+        if version < 10: # add missing field in JDF <1.10
+          dopravci = [x+['1'] for x in dopravci]
+        # Write with keys (ICO, Address)
+        n_dopravci.update({tuple([x[0]]+[x[5]]):tuple(x[1:5]+x[6:]) for x in dopravci})
+        l_dopravci.update({tuple([batchID, x[5], x[-1]]):tuple() for x in dopravci})
+  
+  # Assign secondary ID for carriers with the same company ID (ICO)
+  for d in {x for (x, y) in n_dopravci}:
+    carrier = {x for x in n_dopravci.items() if x[0][0] == d}
+    if len(carrier) > 1:
+      for i in range(len(carrier)):
+        c = carrier.pop()
+        n_dopravci.update({c[0]:tuple(list(c[1][:-2])+[str(i+1)])})
+        for l in {x for x in l_dopravci.items() if x[0][1] == c[0][1]}:
+          l_dopravci.update({l[0]:tuple([c[0][0], c[1][-1]])})
+    else:
+      c = carrier.pop()
+      for l in {x for x in l_dopravci.items() if x[0][1] == c[0][1]}:
+        l_dopravci.update({l[0]:tuple([c[0][0], '1'])})
+  # Change keys to (ICO, Secondary ID)
+  n_dopravci = {tuple([x[0][0]]+[x[1][-1]]):tuple(list(x[1][:4])+[x[0][1]]+list(x[1][5:-1])) for x in n_dopravci.items()}
+  l_dopravci = {tuple([x[0][0], x[1][0], x[0][2]]):tuple([x[1][0], x[1][1]]) for x in l_dopravci.items()}
+
+def processLinky():
+  print('Linky')
+
+def processLinExt():
+  print('LinExt')
+  
+def processZaslinky():
+  print('Zaslinky')
+
+def processSpoje():
+  print('Spoje')
+
+def processSpojSkup():
+  print('SpojSkup')
+
+def processZasspoje():
+  print('Zasspoje')
+
+def processUdaje():
+  print('Udaje')
+
+def processPevnykod():
+  print('Pevnykod')
+  global n_pevnykod
+  for i in range(len(n_kody)):
+    n_pevnykod.update({str(i+1): tuple([n_kody[i], ''])})
+  
+def processCaskody():
+  print('Caskody')
+
+def processNavaznosti():
+  print('Navaznosti')
+
+def processAltdop():
+  print('Altdop')
+
+def processAltlinky():
+  print('Altlinky')
+
+def processMistenky():
+  print('Mistenky')
+
+def updateData():
+  # Check whether we have the newest JDF.zip
+  print('Connecting to {0}'.format(SERVER))
+  ftp = FTP(SERVER)
+  ftp.login()
+  modify = int(ftp.sendcmd('MDTM {0}/{1}'.format(SERVER_DIR, SERVER_FILE)).split(' ')[1])
   localModify = 0
+  try:
+    with open('{0}/{1}'.format(DATA_DIR, MODIFY_FILE), 'r') as f:
+      try:
+        localModify = int(f.read())
+      except ValueError:
+        pass
+  except FileNotFoundError:
+    pass
+  
+  try:
+    with open('{0}/{1}'.format(DATA_DIR, SERVER_FILE), 'r') as f:
+      pass
+  except FileNotFoundError:
+    localModify = 0
 
-if modify > localModify:
-  with open('{0}/{1}'.format(DATA_DIR, MODIFY_FILE), 'w') as f:
-    print('Found newer version, downloading...')
-    with open('{0}/{1}'.format(DATA_DIR, SERVER_FILE), 'wb') as file:
-      ftp.retrbinary('RETR ' + SERVER_FILE, file.write)
-    f.write(str(modify))
-    print('Done.')
-else:
-  print('Current version {0} is up to date'.format(localModify))
+  if modify > localModify:
+    with open('{0}/{1}'.format(DATA_DIR, MODIFY_FILE), 'w') as f:
+      print('Found newer version {0}, downloading...\n'.format(modify))
+      with open('{0}/{1}'.format(DATA_DIR, SERVER_LIST_STOPS), 'wb') as file:
+        ftp.retrbinary('RETR {0}/{1}'.format(SERVER_LIST_DIR, SERVER_LIST_STOPS), file.write)
+      with open('{0}/{1}'.format(DATA_DIR, SERVER_FILE), 'wb') as file:
+        ftp.retrbinary('RETR {0}/{1}'.format(SERVER_DIR, SERVER_FILE), file.write)
+      f.write(str(modify))
+      print('Done.')
+  else:
+    print('Current version {0} is up to date\n'.format(localModify))
 
-ftp.quit()
-print()
+  ftp.quit()
 
+
+updateData();
+
+# File processing
 print('Starting file processing...')
 zips = []
 n_verzejdf = [['1.11', '', '', '', date.today().strftime('%d%m%Y'), 'Autobusy 2015']]
-n_zastavky = []
-n_oznacniky = []
-n_dopravci = []
-n_linky = []
-n_linext = []
-n_zaslinky = []
-n_spoje = []
-n_spojskup = []
-n_zasspoje = []
-n_udaje = []
+n_zastavky = dict()
+n_oznacniky = dict()
+n_dopravci = dict()
+n_linky = dict()
+n_linext = dict()
+n_zaslinky = dict()
+n_spoje = dict()
+n_spojskup = dict()
+n_zasspoje = dict()
+n_udaje = dict()
 n_kody = ['X', '+', '1', '2', '3', '4', '5', '6', '7', 'R', '#', '|', '<', '@', '%', 'W', 'w', 'x', '~', 'I', '(', ')', '$', '{', '}', '[', 'O', 'v', 's', '§', 'A', 'B', 'C', 'T', '!', 't', 'b', 'U', 'S', 'J', 'P']
-n_pevnykod = []
-n_caskody = []
-n_navaznosti = []
-n_altdop = []
-n_altlinky = []
-n_mistenky = []
+n_pevnykod = dict()
+n_caskody = dict()
+n_navaznosti = dict()
+n_altdop = dict()
+n_altlinky = dict()
+n_mistenky = dict()
 
-for i in range(len(n_kody)):
-  n_pevnykod.append([str(i+1), n_kody[i], ''])
+# Linkers between original and new IDs
+l_zastavky = dict()
+l_oznacniky = dict()
+l_dopravci = dict()
+l_linky = dict()
+l_zaslinky = dict()
+l_spoje = dict()
+l_spojskup = dict()
+l_zasspoje = dict()
+l_pevnykod = dict()
 
 with ZipFile('{0}/{1}'.format(DATA_DIR, SERVER_FILE), 'r') as main:
   # Iterate through ZIPs inside JDF.zip
   zips = sorted(main.namelist(), key = lambda x: int(x.split('.')[0]))
-#  zips = [str(x)+'.zip' for x in range(1, 100)]
-  for zip in zips:
-    with main.open(zip) as batch:
-      zdata = BytesIO(batch.read())
-      with ZipFile(zdata, 'r') as z:
-        # Get JDF version of current batch
-        verzejdf = jdfread('VerzeJDF', 1)[0]
-        version = int(verzejdf[0].split('.')[1]) # can be 8, 9, 10 or 11 (JDF version 1.X)
-        
-        zastavky = jdfread('Zastavky', 1)
-        dopravci = jdfread('Dopravci', 1)
-        linky = jdfread('Linky', 1)
-        zaslinky = jdfread('Zaslinky', 1)
-        spoje = jdfread('Spoje', 1)
-        zasspoje = jdfread('Zasspoje', 1)
-        pevnykod = jdfread('Pevnykod', 1)
-        caskody = jdfread('Caskody', 1)
-        
-        # Optional files
-        oznacniky = jdfread('Oznacniky')
-        linext = jdfread('LinExt')
-        spojskup = jdfread('SpojSkup')
-        udaje = jdfread('Udaje')
-        navaznosti = jdfread('Navaznosti')
-        altdop = jdfread('Altdop')
-        altlinky = jdfread('Altlinky')
-        mistenky = jdfread('Mistenky')
+  #zips = [str(x)+'.zip' for x in range(1, 100)]
+  
+  processPevnykod()
+  processDopravci()
+  processZastavky()
 
-        for d in dopravci:
-          if version < 10:
-            d.append('1')
-          # search for unique company IDs
-          if not any(d[0] in sub for sub in n_dopravci):
-            n_dopravci.append(d)
-          # if it's not unique, check for duplicity and assign secondary ID
-          elif not any(d[2] in sub and d[5] in sub and d[6] in sub for sub in n_dopravci):
-            sameId = [x for x in n_dopravci if x[0] == d[0]]
-            d[12] = str(max(int(x[12]) for x in sameId) + 1)
-            n_dopravci.append(d)
+# Final data export
+print('\nWriting final data')
 
+n_pevnykod = [[x[0]]+list(x[1]) for x in n_pevnykod.items()]
+n_dopravci = [[x[0][0]]+list(x[1])+[x[0][1]] for x in n_dopravci.items()]
+n_zastavky = [[x[0]]+list(x[1]) for x in n_zastavky.items()]
 
-print('Writing final data')
 jdfwrite('VerzeJDF', n_verzejdf)
-#jdfwrite('Zastavky', n_zastavky)
+jdfwrite('Zastavky', n_zastavky)
 #jdfwrite('Oznacniky', n_oznacniky)
 jdfwrite('Dopravci', n_dopravci)
 #jdfwrite('Linky', n_linky)
@@ -189,3 +306,5 @@ jdfwrite('Pevnykod', n_pevnykod)
 #jdfwrite('Altdop', n_altdop)
 #jdfwrite('Altlinky', n_altlinky)
 #jdfwrite('Mistenky', n_mistenky)
+
+print('Done, exiting.')

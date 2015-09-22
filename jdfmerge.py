@@ -140,7 +140,7 @@ def processDopravci():
           dopravci = [x+['1'] for x in dopravci]
         # Write with keys (ICO, Address)
         n_dopravci.update({tuple([x[0]]+[x[5]]):tuple(x[1:5]+x[6:]) for x in dopravci})
-        l_dopravci.update({tuple([batchID, x[5], x[-1]]):tuple() for x in dopravci})
+        l_dopravci.update({tuple([batchID, x[0], x[5], x[-1]]):tuple() for x in dopravci})
   
   # Assign secondary ID for carriers with the same company ID (ICO)
   for d in {x for (x, y) in n_dopravci}:
@@ -148,19 +148,62 @@ def processDopravci():
     if len(carrier) > 1:
       for i in range(len(carrier)):
         c = carrier.pop()
-        n_dopravci.update({c[0]:tuple(list(c[1][:-2])+[str(i+1)])})
-        for l in {x for x in l_dopravci.items() if x[0][1] == c[0][1]}:
-          l_dopravci.update({l[0]:tuple([c[0][0], c[1][-1]])})
+        n_dopravci.update({c[0]:tuple(list(c[1][:-1])+[str(i+1)])})
     else:
       c = carrier.pop()
-      for l in {x for x in l_dopravci.items() if x[0][1] == c[0][1]}:
-        l_dopravci.update({l[0]:tuple([c[0][0], '1'])})
+      n_dopravci.update({c[0]:tuple(list(c[1][:-1])+['1'])})
+  
+  for j in l_dopravci.items():
+    d = n_dopravci[(j[0][1], j[0][2])]
+    l_dopravci.update({j[0]:d[-1]})
+  
   # Change keys to (ICO, Secondary ID)
-  n_dopravci = {tuple([x[0][0]]+[x[1][-1]]):tuple(list(x[1][:4])+[x[0][1]]+list(x[1][5:-1])) for x in n_dopravci.items()}
-  l_dopravci = {tuple([x[0][0], x[1][0], x[0][2]]):tuple([x[1][0], x[1][1]]) for x in l_dopravci.items()}
+  n_dopravci = {tuple([x[0][0]]+[x[1][-1]]):tuple(list(x[1][:4])+[x[0][1]]+list(x[1][4:-1])) for x in n_dopravci.items()}
+  # Linker (BatchID, ICO, Original sec. ID) -> New sec. ID
+  l_dopravci = {tuple([x[0][0], x[0][1], x[0][3]]):x[1] for x in l_dopravci.items()}
 
 def processLinky():
   print('Linky')
+  global n_linky
+  global l_linky
+  # Processing lines
+  for zip in zips:
+    batchID = zip.split('.')[0]
+    with main.open(zip) as batch:
+      zdata = BytesIO(batch.read())
+      with ZipFile(zdata, 'r') as z:
+        version = getVersion(z)
+        linky = jdfread('Linky', z, 1)
+        for l in range(len(linky)):
+          # Add fields missing in older JDF versions
+          if version < 10:
+            linky[l] = linky[l][:4] + ['A', '0', '0', '0'] + linky[l][4:] + ['1', '1']
+          if version < 11:
+            linky[l] = linky[l][:8] + ['0'] + linky[l][8:]
+          linky[l][15] = l_dopravci[(batchID, linky[l][2], linky[l][15])]
+        # Write with keys (Line number, valid from, valid to)
+        n_linky.update({tuple([x[0]]+[x[13]]+[x[14]]):tuple(list(x[1:13])+list(x[15:])) for x in linky})
+        l_linky.update({tuple([batchID, x[0], x[13], x[14], x[-1]]):tuple() for x in linky})
+  
+  # Assign secondary ID based on timetable validity
+  for l in {x for (x, y, z) in n_linky}:
+    line = {x for x in n_linky.items() if x[0][0] == l}
+    if len(line) > 1:
+      for i in range(len(line)):
+        l = line.pop()
+        n_linky.update({l[0]:tuple(list(l[1][:-1])+[str(i+1)])})
+    else:
+      l = line.pop()
+      n_linky.update({l[0]:tuple(list(l[1][:-1])+['1'])})
+  
+  for j in l_linky.items():
+    l = n_linky[(j[0][1], j[0][2], j[0][3])]
+    l_dopravci.update({j[0]:l[-1]})
+  
+  # Change keys to (Line number, Secondary ID)
+  n_linky = {tuple([x[0][0]]+[x[1][-1]]):tuple(list(x[1][:12])+list(x[0][1:])+list(x[1][12:-1])) for x in n_linky.items()}
+  # Linker (BatchID, Line number, Original sec. ID) -> New sec. ID
+  l_linky = {tuple([x[0][0], x[0][1], x[0][4]]):x[1] for x in l_linky.items()}
 
 def processLinExt():
   print('LinExt')
@@ -237,11 +280,6 @@ def updateData():
 
   ftp.quit()
 
-
-updateData();
-
-# File processing
-print('Starting file processing...')
 zips = []
 n_verzejdf = [['1.11', '', '', '', date.today().strftime('%d%m%Y'), 'Autobusy 2015']]
 n_zastavky = dict()
@@ -273,6 +311,11 @@ l_spojskup = dict()
 l_zasspoje = dict()
 l_pevnykod = dict()
 
+updateData();
+
+# File processing
+print('Starting file processing...')
+
 with ZipFile('{0}/{1}'.format(DATA_DIR, SERVER_FILE), 'r') as main:
   # Iterate through ZIPs inside JDF.zip
   zips = sorted(main.namelist(), key = lambda x: int(x.split('.')[0]))
@@ -281,19 +324,22 @@ with ZipFile('{0}/{1}'.format(DATA_DIR, SERVER_FILE), 'r') as main:
   processPevnykod()
   processDopravci()
   processZastavky()
+  processLinky()
+  
 
 # Final data export
 print('\nWriting final data')
 
 n_pevnykod = [[x[0]]+list(x[1]) for x in n_pevnykod.items()]
-n_dopravci = [[x[0][0]]+list(x[1])+[x[0][1]] for x in n_dopravci.items()]
 n_zastavky = [[x[0]]+list(x[1]) for x in n_zastavky.items()]
+n_dopravci = [[x[0][0]]+list(x[1])+[x[0][1]] for x in n_dopravci.items()]
+n_linky    = [[x[0][0]]+list(x[1])+[x[0][1]] for x in n_linky.items()]
 
 jdfwrite('VerzeJDF', n_verzejdf)
 jdfwrite('Zastavky', n_zastavky)
 #jdfwrite('Oznacniky', n_oznacniky)
 jdfwrite('Dopravci', n_dopravci)
-#jdfwrite('Linky', n_linky)
+jdfwrite('Linky', n_linky)
 #jdfwrite('LinExt', n_linext)
 #jdfwrite('Zaslinky', n_zaslinky)
 #jdfwrite('Spoje', n_spoje)

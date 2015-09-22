@@ -5,12 +5,12 @@ A set of tools to work with data from the `Czech National Information System of 
 
 The official source provides ~10.5k zip files (batches) inside another zip. That is rather unconvenient to parse. This script tries to merge all of them into a single batch. It can also download up-to-date data from the server.
 
-Currently outputs 4/17 files specified in the JDF 1.11:
+Currently outputs 5/17 files specified in the JDF 1.11:
  - [x] **VerzeJDF**
  - [x] **Zastavky**
  - [ ] Oznacniky
  - [x] **Dopravci**
- - [ ] Linky
+ - [x] **Linky**
  - [ ] LinExt
  - [ ] Zaslinky
  - [ ] Spoje
